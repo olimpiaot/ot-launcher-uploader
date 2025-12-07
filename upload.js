@@ -9,6 +9,29 @@ import { progressBar } from 'progress-bar-cli'
 
 dotenv.config()
 
+// Validate required environment variables
+const requiredEnvVars = [
+  'CLIENT_PATH',
+  'R2_CDN_URL',
+  'S3_ENDPOINT',
+  'R2_REGION',
+  'R2_ACCESS_KEY_ID',
+  'R2_SECRET_ACCESS_KEY',
+  'R2_BUCKET'
+]
+
+const missingVars = requiredEnvVars.filter(varName => !process.env[varName])
+
+if (missingVars.length > 0) {
+  console.error('❌ Erro: Variáveis de ambiente faltando no arquivo .env:')
+  missingVars.forEach(varName => {
+    console.error(`   - ${varName}`)
+  })
+  console.error('\n💡 Dica: Verifique se o arquivo .env existe na pasta ot-launcher-uploader')
+  console.error('   e se todas as variáveis estão definidas corretamente.')
+  process.exit(1)
+}
+
 const limit = pLimit(parseInt(process.env.UPLOAD_CONCURRENCY) || 5);
 
 const DEFAULT_MANIFEST = {}
@@ -41,32 +64,54 @@ async function fetchManifest() {
   }
 }
 
+function readDirRecursive(dir, baseDir = dir) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true })
+  const files = []
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name)
+    const relativePath = path.relative(baseDir, fullPath)
+
+    if (entry.isDirectory()) {
+      files.push(...readDirRecursive(fullPath, baseDir))
+    } else if (entry.isFile()) {
+      files.push({
+        fullPath,
+        relativePath: relativePath.replace(/\\/g, '/')
+      })
+    }
+  }
+
+  return files
+}
+
 async function readClientFiles() {
   const clientDir = path.resolve(process.env.CLIENT_PATH)
-  const files = fs.readdirSync(clientDir, { withFileTypes: true, recursive: true })
+  
+  if (!fs.existsSync(clientDir)) {
+    console.error(`❌ Erro: A pasta do cliente não existe: ${clientDir}`)
+    console.error('   Verifique se o caminho CLIENT_PATH no arquivo .env está correto.')
+    process.exit(1)
+  }
+  
+  const files = readDirRecursive(clientDir)
   const localFiles = {}
 
   const tasks = files.map(
     (file) =>
       new Promise((resolve, reject) => {
-        if (file.isFile()) {
-          const filePath = path.join(file.path, file.name)
-          const relativeFilePath = path.relative(clientDir, filePath).replace(/\\/g, '/')
-          const hash = crypto.createHash('md5')
-          const stream = fs.createReadStream(filePath)
+        const hash = crypto.createHash('md5')
+        const stream = fs.createReadStream(file.fullPath)
 
-          stream.on('data', (data) => hash.update(data))
-          stream.on('end', () => {
-            localFiles[relativeFilePath] = {
-              size: fs.statSync(filePath).size,
-              hash: hash.digest('hex')
-            }
-            resolve()
-          })
-          stream.on('error', reject)
-        } else {
+        stream.on('data', (data) => hash.update(data))
+        stream.on('end', () => {
+          localFiles[file.relativePath] = {
+            size: fs.statSync(file.fullPath).size,
+            hash: hash.digest('hex')
+          }
           resolve()
-        }
+        })
+        stream.on('error', reject)
       })
   )
 

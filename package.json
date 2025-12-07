@@ -14,6 +14,7 @@
   "author": "Arkadiusz \"Oen\" Lach",
   "type": "module",
   "scripts": {
+    "check-env": "node check-env.js",
     "upload": "node upload.js",
     "purge": "node purge.js",
     "sync": "node sync.js"
